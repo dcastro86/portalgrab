@@ -86,7 +86,6 @@ impl PortalClient {
 
     fn start_screen_cast(
         &self,
-        include_cursor: bool,
         restore_token: Option<&str>,
     ) -> Result<ActiveScreenCast, Box<dyn std::error::Error>> {
         let desktop = Proxy::new(
@@ -100,7 +99,7 @@ impl PortalClient {
         let session = self.create_session(&desktop)?;
         
         println!("Portal: Selecting sources...");
-        self.select_sources(&desktop, &session, include_cursor, restore_token)?;
+        self.select_sources(&desktop, &session, restore_token)?;
         
         println!("Portal: Starting session...");
         let (streams, new_restore_token) = self.start(&desktop, &session)?;
@@ -142,7 +141,6 @@ impl PortalClient {
         &self,
         desktop: &Proxy<'_>,
         session: &OwnedObjectPath,
-        include_cursor: bool,
         restore_token: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let handle_token = next_token();
@@ -154,7 +152,7 @@ impl PortalClient {
             ("handle_token", ZValue::from(handle_token.as_str())),
             ("types", ZValue::from(3_u32)), // 1 = monitor, 2 = window, 3 = both
             ("multiple", ZValue::from(false)),
-            ("cursor_mode", ZValue::from(if include_cursor { 2_u32 } else { 1_u32 })), // 2 = Embedded, 1 = Hidden
+            ("cursor_mode", ZValue::from(1_u32)), // 1 = Hidden: a pixel sampler must not see the pointer
             ("persist_mode", ZValue::from(2_u32)), // 2 = persistent
         ]);
 
@@ -625,12 +623,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .map(|t| t.trim().to_string());
 
-    let cast = match portal_client.start_screen_cast(true, saved_token.as_deref()) {
+    let cast = match portal_client.start_screen_cast(saved_token.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             println!("Portal request with token failed: {:?}. Retrying without token...", e);
             let _ = std::fs::remove_file(&token_path);
-            portal_client.start_screen_cast(true, None)?
+            portal_client.start_screen_cast(None)?
         }
     };
 
