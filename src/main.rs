@@ -689,7 +689,11 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             println!("Portal request with token failed: {:?}. Retrying without token...", e);
             let _ = std::fs::remove_file(&token_path);
-            portal_client.start_screen_cast(None)?
+            portal_client.start_screen_cast(None).unwrap_or_else(|e| {
+                // Exit 2 is RestartPreventExitStatus in the unit: a Cancel must not respawn the dialog.
+                eprintln!("portalgrab: screen cast not granted ({e}); not retrying");
+                std::process::exit(2)
+            })
         }
     };
 
