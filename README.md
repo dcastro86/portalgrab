@@ -78,6 +78,22 @@ fit on the screen.
 The command starts a new process for each grab. For many grabs a second, talk to the socket
 directly (see below). That skips the process startup and the PPM header.
 
+## Idle cost and `--lazy`
+
+By default the daemon copies every frame the compositor sends, so a grab never waits. While the
+screen is changing this costs CPU even when nobody is grabbing. Measured at 1080p with a video
+playing: about 25% of a core in portalgrab and about 20% more in the compositor.
+
+`portalgrab daemon --lazy` pauses the stream after 2 s without a request, so both costs drop to
+zero while idle. The next grab wakes the stream and waits for a fresh frame, which took about
+15 ms in testing. Grabs that arrive while the stream is awake answer at once. To use it, change
+`ExecStart` in the unit to `%h/.local/bin/portalgrab daemon --lazy`.
+
+KWin sends a frame as soon as a paused stream resumes, so a lazy grab is always current there. A
+compositor that only sends frames when something changes might send nothing on a static screen.
+In that case a grab waits 1 s and returns the frame from before the pause, which can be out of
+date.
+
 ## Protocol
 
 The daemon listens on `$XDG_RUNTIME_DIR/portalgrab.sock`. Only processes running as the same user

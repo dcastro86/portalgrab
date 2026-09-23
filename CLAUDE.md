@@ -23,7 +23,6 @@ link here while this repo is private). After that, set Status to released. Reope
 second user needs something from **Not doing**.
 
 **Not doing (yet):** streaming frames to clients, source selection flags, AUR/crates.io packaging,
-X11/Windows backends (use `mss` there), a `--lazy` daemon flag that skips frames while no client is
-connected (add it only when someone measures the always-on copy as a real CPU cost).
+X11/Windows backends (use `mss` there).
 
 **Status:** released 2026-09-23 (v0.1.1, public). sanguine-sentry uses it; its crate is gone. Open for bugs, or when a second user needs something from **Not doing**.

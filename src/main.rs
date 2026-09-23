@@ -4,7 +4,7 @@ use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 
@@ -29,6 +29,7 @@ struct SimpleFrame {
     height: u32,
     data: Vec<u8>,
     is_rgba: bool,
+    at: Instant,
 }
 
 struct UserData {
@@ -288,7 +289,6 @@ fn build_stream_params(
 fn run_video_loop(
     fd: OwnedFd,
     node_id: u32,
-    runtime_active: Arc<AtomicBool>,
     latest_frame: Arc<Mutex<Option<SimpleFrame>>>,
     control_rx: std::sync::mpsc::Receiver<ControlMessage>,
     target_w: u32,
@@ -364,17 +364,12 @@ fn run_video_loop(
             user_data.buffer_params_sent = true;
         })
         .process({
-            let runtime = Arc::clone(&runtime_active);
             let latest_frame = Arc::clone(&latest_frame);
             let first_frame = Arc::new(AtomicBool::new(true));
             move |stream, user_data| {
-                if !runtime.load(Ordering::Relaxed) {
-                    return;
-                }
-
-                // ponytail: every frame is copied even with no client connected, so a grab is never
-                // stale. Measured 2026-09-23 on 1080p with a video playing: ~25% of a core here and
-                // ~20% more in KWin. A `--lazy` flag that skips frames while idle is the upgrade.
+                // Every frame is copied while the stream is active: ~25% of a core here and ~20% more
+                // in KWin at 1080p with a video playing (measured 2026-09-23). `--lazy` pauses the
+                // stream while nobody is asking, which stops both.
                 let Some(mut buffer) = stream.dequeue_buffer() else {
                     return;
                 };
@@ -479,6 +474,7 @@ fn run_video_loop(
                         height: size.height,
                         data: user_data.frame_bytes.clone(),
                         is_rgba,
+                        at: Instant::now(),
                     });
                 }
             }
@@ -526,11 +522,12 @@ fn run_video_loop(
     while !terminate && !stream_dead.get() {
         while let Ok(message) = control_rx.try_recv() {
             match message {
+                // Pausing the stream stops the compositor producing frames too, not just our copy.
                 ControlMessage::Start => {
-                    runtime_active.store(true, Ordering::Relaxed);
+                    let _ = stream.set_active(true);
                 }
                 ControlMessage::Stop => {
-                    runtime_active.store(false, Ordering::Relaxed);
+                    let _ = stream.set_active(false);
                 }
                 ControlMessage::Terminate => {
                     terminate = true;
@@ -573,13 +570,27 @@ fn get_restore_token_path() -> std::path::PathBuf {
     state_dir.join("portalgrab").join("restore_token")
 }
 
-const USAGE: &str = "usage: portalgrab daemon | portalgrab grab [x y w h]";
+const USAGE: &str = "usage: portalgrab daemon [--lazy] | portalgrab grab [x y w h]";
+
+// --lazy: pause the stream after this long without a request.
+const LAZY_IDLE: Duration = Duration::from_secs(2);
+// --lazy: how long a request waits for the first frame after waking the stream.
+const LAZY_WAKE_TIMEOUT: Duration = Duration::from_secs(1);
+
+struct Lazy {
+    active_since: Option<Instant>,
+    last_request: Instant,
+}
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        Some("daemon") if args.len() == 1 => daemon().await,
+        Some("daemon") => match &args[1..] {
+            [] => daemon(false).await,
+            [flag] if flag == "--lazy" => daemon(true).await,
+            _ => Err(USAGE.into()),
+        },
         Some("grab") => grab(&args[1..]),
         _ => Err(USAGE.into()),
     };
@@ -634,7 +645,7 @@ fn grab(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
+async fn daemon(lazy: bool) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     println!("Initializing portalgrab daemon...");
 
@@ -686,10 +697,8 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
 
     let latest_frame = Arc::new(Mutex::new(None::<SimpleFrame>));
     let (control_tx, control_rx) = std::sync::mpsc::channel();
-    let runtime_active = Arc::new(AtomicBool::new(true));
 
     let pw_latest_frame = latest_frame.clone();
-    let pw_runtime_active = runtime_active.clone();
     
     let target_w = stream.width.unwrap_or(1920);
     let target_h = stream.height.unwrap_or(1080);
@@ -702,7 +711,6 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = run_video_loop(
             fd,
             node_id,
-            pw_runtime_active,
             pw_latest_frame,
             control_rx,
             target_w,
@@ -725,6 +733,25 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
     let listener = listener?;
 
     println!("UNIX socket listening at: {}", socket_path.display());
+
+    // --lazy starts active (so a first frame exists) and pauses after LAZY_IDLE without requests.
+    let lazy_state = lazy.then(|| {
+        Arc::new(Mutex::new(Lazy { active_since: Some(Instant::now()), last_request: Instant::now() }))
+    });
+    if let Some(state) = lazy_state.clone() {
+        let stop_tx = control_tx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            loop {
+                tick.tick().await;
+                let mut s = state.lock().unwrap_or_else(|p| p.into_inner());
+                if s.active_since.is_some() && s.last_request.elapsed() > LAZY_IDLE {
+                    let _ = stop_tx.send(ControlMessage::Stop);
+                    s.active_since = None;
+                }
+            }
+        });
+    }
 
     // systemd stops services with SIGTERM, a terminal with SIGINT.
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -757,6 +784,8 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let frame_ref = latest_frame.clone();
+        let lazy_ref = lazy_state.clone();
+        let wake_tx = control_tx.clone();
 
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
@@ -778,6 +807,23 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
                         };
+
+                        // --lazy: wake the stream if it is paused, then wait for a frame newer than the
+                        // wake-up so the answer is never older than the request.
+                        if let Some(state) = &lazy_ref {
+                            let since = {
+                                let mut s = state.lock().unwrap_or_else(|p| p.into_inner());
+                                s.last_request = Instant::now();
+                                *s.active_since.get_or_insert_with(|| {
+                                    let _ = wake_tx.send(ControlMessage::Start);
+                                    Instant::now()
+                                })
+                            };
+                            let fresh = || frame_ref.lock().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|f| f.at >= since);
+                            while !fresh() && since.elapsed() < LAZY_WAKE_TIMEOUT {
+                                tokio::time::sleep(Duration::from_millis(2)).await;
+                            }
+                        }
 
                         let opt_frame = match frame_ref.lock() {
                             Ok(lock) => lock.clone(),
