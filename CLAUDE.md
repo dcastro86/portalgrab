@@ -12,15 +12,18 @@ script without a portal permission prompt on every run. It is spun out of `sangu
 
 **Done when:**
 - `portalgrab daemon` holds a portal ScreenCast session and reuses the restore token, so the prompt appears once
-- `portalgrab grab x y w h` prints that region as PPM to stdout
+- `portalgrab grab x y w h` prints that region as PPM to stdout; `portalgrab grab` with no args prints the full frame
 - a systemd user unit ships in the repo
-- sanguine-sentry uses portalgrab and no longer has its own crate
-- the README is written for strangers
+- the README is written for strangers (install, socket protocol, coordinates, tested-on)
+- `v0.1.0` is released with a binary
 
-When all of these hold, flip the GitHub repo to public and set Status to released. Reopen for bugs, or
-when a second user needs something from **Not doing**.
+When these hold, flip the GitHub repo to public. Then, in the same session, cut sanguine-sentry over:
+it uses portalgrab and no longer has its own crate or `release.yml` (sanguine is public, so it must not
+link here while this repo is private). After that, set Status to released. Reopen for bugs, or when a
+second user needs something from **Not doing**.
 
 **Not doing (yet):** streaming frames to clients, source selection flags, AUR/crates.io packaging,
-X11/Windows backends (use `mss` there).
+X11/Windows backends (use `mss` there), a `--lazy` daemon flag that skips frames while no client is
+connected (add it only when someone measures the always-on copy as a real CPU cost).
 
 **Status:** name, directory and private repo created 2026-09-22. No code yet.
