@@ -622,6 +622,10 @@ async fn main() {
         _ => Err(USAGE.into()),
     };
     if let Err(e) = result {
+        // A reader that stops early (`grab | head`) is a normal end, not a failure.
+        if e.downcast_ref::<std::io::Error>().map(|e| e.kind()) == Some(std::io::ErrorKind::BrokenPipe) {
+            return;
+        }
         eprintln!("portalgrab: {e}");
         std::process::exit(1);
     }
