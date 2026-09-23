@@ -637,12 +637,7 @@ fn grab(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let request = match args {
         [] => "\n".to_string(),
-        [x, y, w, h] => {
-            for n in [x, y, w, h] {
-                n.parse::<usize>().map_err(|_| format!("not a pixel coordinate: {n}\n{USAGE}"))?;
-            }
-            format!("{x} {y} {w} {h}\n")
-        }
+        [x, y, w, h] => format!("{x} {y} {w} {h}\n"), // the daemon validates
         _ => return Err(USAGE.into()),
     };
 
