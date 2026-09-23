@@ -688,17 +688,20 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .map(|t| t.trim().to_string());
 
+    // Exit 2 is RestartPreventExitStatus in the unit: a Cancel must not respawn the dialog.
+    let refused = |e: Box<dyn std::error::Error>| -> ! {
+        eprintln!("portalgrab: screen cast not granted ({e}); not retrying");
+        std::process::exit(2)
+    };
     let cast = match portal_client.start_screen_cast(saved_token.as_deref()) {
         Ok(c) => c,
-        Err(e) => {
+        // Only a rejected saved token earns a retry; without one, the user already saw the dialog.
+        Err(e) if saved_token.is_some() => {
             println!("Portal request with token failed: {:?}. Retrying without token...", e);
             let _ = std::fs::remove_file(&token_path);
-            portal_client.start_screen_cast(None).unwrap_or_else(|e| {
-                // Exit 2 is RestartPreventExitStatus in the unit: a Cancel must not respawn the dialog.
-                eprintln!("portalgrab: screen cast not granted ({e}); not retrying");
-                std::process::exit(2)
-            })
+            portal_client.start_screen_cast(None).unwrap_or_else(|e| refused(e))
         }
+        Err(e) => refused(e),
     };
 
     if let Some(ref token) = cast.restore_token {
