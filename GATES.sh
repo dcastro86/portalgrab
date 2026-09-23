@@ -59,6 +59,12 @@ gate "stopping the service removes the socket" \
 gate "a dead stream restarts the daemon (new PID, grabs work, no dialog)" \
   "old=\$(systemctl --user show -p MainPID --value portalgrab); for i in \$(seq 10); do n=\$(pw-dump | jq -r '.[] | select(.type==\"PipeWire:Interface:Node\" and .info.props[\"node.name\"]==\"portalgrab\") | .id'); [ -n \"\$n\" ] && break; sleep 0.5; done; [ -n \"\$n\" ] && pw-cli destroy \$n >/dev/null && sleep 7 && [ \"\$(systemctl --user show -p MainPID --value portalgrab)\" != \"\$old\" ] && eval '$first_grab' | grep -q GRAB-OK"
 
+gate "--lazy pauses the stream while idle (needs a changing screen, e.g. a video)" \
+  "bash tests/lazy_check.sh | grep -q '^LAZY-PAUSE-OK$'"
+
+gate "--lazy wakes on a grab and answers within 500 ms" \
+  "bash tests/lazy_check.sh | grep -q '^LAZY-WAKE-OK$'"
+
 gate "release workflow builds portalgrab" \
   "grep -q 'portalgrab' .github/workflows/release.yml && ! grep -qi sanguine .github/workflows/release.yml"
 
