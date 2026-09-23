@@ -359,12 +359,23 @@ fn run_video_loop(
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_fd_rc(fd, None)?;
 
+    // Set when PipeWire goes away (daemon restart, source node destroyed, sharing stopped). The
+    // loop then ends so the daemon exits and systemd restarts it, instead of serving a frozen frame.
+    let stream_dead = std::rc::Rc::new(std::cell::Cell::new(false));
+
     let _core_listener = core
         .clone()
         .add_listener_local()
         .info(|info| tracing::debug!(?info, "PipeWire core info"))
-        .error(|id, seq, res, message| {
-            tracing::error!(id, seq, res, message, "PipeWire core error");
+        .error({
+            let stream_dead = stream_dead.clone();
+            move |id, seq, res, message| {
+                tracing::error!(id, seq, res, message, "PipeWire core error");
+                // id 0 is the core itself, i.e. the connection to PipeWire.
+                if id == 0 {
+                    stream_dead.set(true);
+                }
+            }
         })
         .done(|id, _seq| {
             tracing::trace!(id, "PipeWire core done");
@@ -384,14 +395,21 @@ fn run_video_loop(
             buffer_params_sent: false,
             frame_bytes: Vec::new(),
         })
-        .state_changed(|_, _, _, new| match new {
-            StreamState::Error(msg) => {
-                tracing::error!(error = %msg, "PipeWire stream entered error state");
+        .state_changed({
+            let stream_dead = stream_dead.clone();
+            move |_, _, _, new| match new {
+                StreamState::Error(msg) => {
+                    tracing::error!(error = %msg, "PipeWire stream entered error state");
+                    stream_dead.set(true);
+                }
+                StreamState::Unconnected => {
+                    tracing::error!("PipeWire stream disconnected");
+                    stream_dead.set(true);
+                }
+                StreamState::Connecting => tracing::debug!("PipeWire stream: connecting"),
+                StreamState::Paused => tracing::debug!("PipeWire stream: paused"),
+                StreamState::Streaming => tracing::debug!("PipeWire stream: streaming"),
             }
-            StreamState::Unconnected => tracing::debug!("PipeWire stream: unconnected"),
-            StreamState::Connecting => tracing::debug!("PipeWire stream: connecting"),
-            StreamState::Paused => tracing::debug!("PipeWire stream: paused"),
-            StreamState::Streaming => tracing::debug!("PipeWire stream: streaming"),
         })
         .param_changed(|_, user_data, id, param| {
             let Some(param) = param else { return; };
@@ -564,7 +582,7 @@ fn run_video_loop(
 
     let pw_loop = main_loop.loop_();
     let mut terminate = false;
-    while !terminate {
+    while !terminate && !stream_dead.get() {
         while let Ok(message) = control_rx.try_recv() {
             match message {
                 ControlMessage::Start => {
@@ -582,6 +600,9 @@ fn run_video_loop(
         pw_loop.iterate(pw::loop_::Timeout::Finite(Duration::from_millis(20)));
     }
 
+    if stream_dead.get() {
+        return Err("PipeWire stream ended".into());
+    }
     Ok(())
 }
 
@@ -734,6 +755,8 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
     println!("Dynamic display size reported by portal: {}x{}", target_w, target_h);
 
     // Spawn PipeWire loop in background thread
+    // Resolves when the worker ends for any reason, a panic included (the sender is dropped).
+    let (worker_done_tx, mut worker_done) = tokio::sync::oneshot::channel::<()>();
     let worker_handle = thread::spawn(move || {
         if let Err(e) = run_video_loop(
             fd,
@@ -746,6 +769,7 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
         ) {
             eprintln!("PipeWire worker error: {:?}", e);
         }
+        let _ = worker_done_tx.send(());
     });
 
     // Setup UNIX domain socket listener
@@ -763,6 +787,7 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
 
     // systemd stops services with SIGTERM, a terminal with SIGINT.
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut worker_died = false;
 
     loop {
         let (socket, _) = tokio::select! {
@@ -772,6 +797,10 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
             },
             _ = tokio::signal::ctrl_c() => break,
             _ = sigterm.recv() => break,
+            _ = &mut worker_done => {
+                worker_died = true;
+                break;
+            }
         };
 
         // Peer UID validation to prevent local privilege escalation / cross-user spoofing
@@ -870,5 +899,9 @@ async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(&socket_path);
     let _ = control_tx.send(ControlMessage::Terminate);
     let _ = worker_handle.join();
+    if worker_died {
+        // Non-zero so Restart=on-failure brings up a fresh stream (the saved token avoids a dialog).
+        return Err("capture stream ended".into());
+    }
     Ok(())
 }
