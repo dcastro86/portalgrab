@@ -60,7 +60,7 @@ const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x40086200;
 fn next_token() -> String {
     use std::sync::atomic::AtomicU64;
     static COUNTER: AtomicU64 = AtomicU64::new(1);
-    format!("sanguine_{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!("portalgrab_{}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
 struct ScreenCastStream {
@@ -380,7 +380,7 @@ fn run_video_loop(
     stream_properties.insert(*pw::keys::MEDIA_CATEGORY, "Capture");
     stream_properties.insert(*pw::keys::MEDIA_ROLE, "Screen");
 
-    let stream = StreamRc::new(core, "sanguine-dma-video", stream_properties)?;
+    let stream = StreamRc::new(core, "portalgrab-video", stream_properties)?;
 
     let listener = stream
         .add_local_listener_with_user_data(UserData {
@@ -595,11 +595,11 @@ fn get_socket_path() -> std::path::PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         let path = std::path::Path::new(&runtime_dir);
         if path.is_dir() {
-            return path.join("sanguine_sentry.sock");
+            return path.join("portalgrab.sock");
         }
     }
     if let Ok(home) = std::env::var("HOME") {
-        return std::path::Path::new(&home).join(".sanguine_sentry.sock");
+        return std::path::Path::new(&home).join(".portalgrab.sock");
     }
     panic!("Neither XDG_RUNTIME_DIR nor HOME is set. Cannot safely create socket.");
 }
@@ -608,11 +608,11 @@ fn get_restore_token_path() -> std::path::PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         let path = std::path::Path::new(&runtime_dir);
         if path.is_dir() {
-            return path.join("sanguine_restore_token.txt");
+            return path.join("portalgrab_restore_token.txt");
         }
     }
     if let Ok(home) = std::env::var("HOME") {
-        return std::path::Path::new(&home).join(".sanguine_restore_token.txt");
+        return std::path::Path::new(&home).join(".portalgrab_restore_token.txt");
     }
     panic!("Neither XDG_RUNTIME_DIR nor HOME is set. Cannot safely create restore token.");
 }
@@ -620,7 +620,7 @@ fn get_restore_token_path() -> std::path::PathBuf {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    println!("Initializing Sanguine Sentry Wayland daemon (PipeWire & DMA-BUF)...");
+    println!("Initializing portalgrab daemon (PipeWire & DMA-BUF)...");
 
     let portal_client = PortalClient::new()?;
 
