@@ -26,4 +26,4 @@ second user needs something from **Not doing**.
 X11/Windows backends (use `mss` there), a `--lazy` daemon flag that skips frames while no client is
 connected (add it only when someone measures the always-on copy as a real CPU cost).
 
-**Status:** code complete 2026-09-23; v0.1.0 tagged while private. Next: flip public, then the sanguine cutover.
+**Status:** code complete 2026-09-23; v0.1.1 released (dead-worker restart, shared-memory frames). Next: flip public, then the sanguine cutover.
