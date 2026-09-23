@@ -56,6 +56,9 @@ gate "grab exits non-zero on out-of-bounds coordinates" \
 gate "stopping the service removes the socket" \
   "systemctl --user stop portalgrab && ! test -e \$XDG_RUNTIME_DIR/portalgrab.sock; systemctl --user start portalgrab"
 
+gate "a dead stream restarts the daemon (new PID, grabs work, no dialog)" \
+  "old=\$(systemctl --user show -p MainPID --value portalgrab); for i in \$(seq 10); do n=\$(pw-dump | jq -r '.[] | select(.type==\"PipeWire:Interface:Node\" and .info.props[\"node.name\"]==\"portalgrab\") | .id'); [ -n \"\$n\" ] && break; sleep 0.5; done; [ -n \"\$n\" ] && pw-cli destroy \$n >/dev/null && sleep 7 && [ \"\$(systemctl --user show -p MainPID --value portalgrab)\" != \"\$old\" ] && eval '$first_grab' | grep -q GRAB-OK"
+
 gate "release workflow builds portalgrab" \
   "grep -q 'portalgrab' .github/workflows/release.yml && ! grep -qi sanguine .github/workflows/release.yml"
 
