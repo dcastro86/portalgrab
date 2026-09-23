@@ -150,7 +150,7 @@ impl PortalClient {
 
         let mut options = HashMap::from([
             ("handle_token", ZValue::from(handle_token.as_str())),
-            ("types", ZValue::from(3_u32)), // 1 = monitor, 2 = window, 3 = both
+            ("types", ZValue::from(1_u32)), // 1 = monitor: x/y then always mean monitor pixels
             ("multiple", ZValue::from(false)),
             ("cursor_mode", ZValue::from(1_u32)), // 1 = Hidden: a pixel sampler must not see the pointer
             ("persist_mode", ZValue::from(2_u32)), // 2 = persistent
