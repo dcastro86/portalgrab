@@ -3,7 +3,6 @@
 # The live gates restart the user service; the first ever run needs one click on the portal dialog.
 
 P="$HOME/.local/bin/portalgrab"
-S="$HOME/Projects/sanguine-sentry"
 
 # grab 0 0 1 1 until it answers P6, for up to 5 s. If the portal dialog came back, the daemon is
 # still blocked on it and this never answers.
@@ -11,14 +10,15 @@ first_grab='for i in $(seq 50); do [ "$($P grab 0 0 1 1 2>/dev/null | head -c2)"
 
 # --- the tool --------------------------------------------------------------
 
+# The Rule in CLAUDE.md: portalgrab knows nothing about the programs that use it.
+gate "no tracked file points into another project" \
+  "git add -A -n . >/dev/null && ! git grep -nE '(~|HOME)/Projects/' -- . ':!GATES.sh'"
+
 gate "release build succeeds" \
   "cargo build --release -q && test -x target/release/portalgrab && echo BUILD-OK | grep -q BUILD-OK"
 
 gate "installed binary is the current build" \
   "cmp -s target/release/portalgrab $P"
-
-gate "no sanguine naming left in the crate" \
-  "test -f src/main.rs && ! grep -rni sanguine src Cargo.toml"
 
 gate "restore token lives in XDG_STATE_HOME (runtime dir is wiped every boot)" \
   "grep -q XDG_STATE_HOME src/main.rs && ! grep -q 'restore_token.txt' src/main.rs"
@@ -78,11 +78,8 @@ gate "the shipped unit runs --lazy" \
 gate "the installed unit matches the shipped one" \
   "cmp -s portalgrab.service \$HOME/.config/systemd/user/portalgrab.service"
 
-gate "portalgrab is not started at login on this machine (sanguine starts it)" \
-  "[ \"\$(systemctl --user is-enabled portalgrab 2>&1)\" = disabled ]"
-
 gate "release workflow builds portalgrab" \
-  "grep -q 'portalgrab' .github/workflows/release.yml && ! grep -qi sanguine .github/workflows/release.yml"
+  "grep -q 'files: target/release/portalgrab' .github/workflows/release.yml"
 
 gate "README is written for strangers (install, protocol, coordinates, tested-on)" \
   "for h in Install Protocol Coordinates Tested; do grep -qE \"^##+ .*\$h\" README.md || exit 1; done; ! grep -q 'Work in progress' README.md"
@@ -95,22 +92,5 @@ gate "v0.2.0 (--lazy) is the latest release and has a binary" \
 gate "GitHub repo is public" \
   "gh repo view dcastro86/portalgrab --json visibility -q .visibility | grep -qx PUBLIC"
 
-# --- sanguine-sentry cutover (after public) --------------------------------
-
-gate "sanguine has no capture crate or release workflow on origin/main" \
-  "git -C $S fetch -q && ! git -C $S ls-tree -r --name-only origin/main | grep -qE '^(sanguine_wayland_capture/|\.github/workflows/release\.yml)'"
-
-gate "sanguine talks to portalgrab.sock" \
-  "git -C $S show origin/main:core/scanner.py | grep -q portalgrab.sock && ! git -C $S show origin/main:core/scanner.py | grep -q sanguine_sentry.sock"
-
-gate "sanguine README points at portalgrab, not the old crate" \
-  "git -C $S show origin/main:README.md | grep -q github.com/dcastro86/portalgrab && ! git -C $S show origin/main:README.md | grep -q sanguine_wayland_capture"
-
 gate "Status says released" \
   "grep -q '^\*\*Status:\*\* released' CLAUDE.md"
-
-gate "sanguine starts portalgrab on launch and stops only what it started" \
-  "bash tests/sanguine_lifecycle.sh | grep -q '^SANGUINE-LIFECYCLE-OK$'"
-
-gate "sanguine's tests pass" \
-  "(cd $S && venv/bin/python -m pytest -q 2>&1) | tail -1 | grep -qE '^[0-9]+ passed'"

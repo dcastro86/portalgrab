@@ -46,6 +46,10 @@ The first start shows the portal dialog. Pick the monitor to capture and allow i
 start reuses the saved permission and shows nothing. If you cancel the dialog, the service stops
 and stays stopped. Run `systemctl --user start portalgrab` to be asked again.
 
+Always start the daemon the same way, normally through the service. The portal ties the saved
+permission to the program that launched the daemon. A daemon started from a terminal counts as the
+terminal app, so switching between terminal and service brings the dialog back.
+
 To pick a different monitor later, delete the saved token and restart:
 
 ```sh
