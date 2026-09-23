@@ -8,7 +8,7 @@ After=graphical-session.target
 ExecStart=%h/.local/bin/portalgrab daemon --lazy
 Restart=on-failure
 RestartSec=5
-# 2 = the portal dialog was cancelled or refused; restarting would just show it again.
+# 2 = the portal dialog was refused, or another daemon is running; restarting cannot help.
 RestartPreventExitStatus=2
 
 [Install]

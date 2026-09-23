@@ -56,6 +56,13 @@ gate "grab exits non-zero on out-of-bounds coordinates" \
 gate "stopping the service removes the socket" \
   "systemctl --user stop portalgrab && ! test -e \$XDG_RUNTIME_DIR/portalgrab.sock; systemctl --user start portalgrab"
 
+# timeout: without the lock, a second daemon steals the socket and runs forever.
+gate "a second daemon refuses to start (exit 2) and leaves the running one serving" \
+  "systemctl --user start portalgrab && eval '$first_grab' | grep -q GRAB-OK && pid=\$(systemctl --user show -p MainPID --value portalgrab); out=\$(timeout 5 $P daemon 2>&1); rc=\$?; [ \$rc -eq 2 ] && echo \"\$out\" | grep -q 'already running' && [ \"\$(systemctl --user show -p MainPID --value portalgrab)\" = \"\$pid\" ] && $P grab 0 0 1 1 | head -c2 | grep -q P6"
+
+gate "a stale socket file with no daemon behind it does not block a start" \
+  "systemctl --user stop portalgrab && touch \$XDG_RUNTIME_DIR/portalgrab.sock && systemctl --user start portalgrab && eval '$first_grab' | grep -q GRAB-OK"
+
 gate "a dead stream restarts the daemon (new PID, grabs work, no dialog)" \
   "old=\$(systemctl --user show -p MainPID --value portalgrab); for i in \$(seq 10); do n=\$(pw-dump | jq -r '.[] | select(.type==\"PipeWire:Interface:Node\" and .info.props[\"node.name\"]==\"portalgrab\") | .id'); [ -n \"\$n\" ] && break; sleep 0.5; done; [ -n \"\$n\" ] && pw-cli destroy \$n >/dev/null && sleep 7 && [ \"\$(systemctl --user show -p MainPID --value portalgrab)\" != \"\$old\" ] && eval '$first_grab' | grep -q GRAB-OK"
 

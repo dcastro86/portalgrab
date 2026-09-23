@@ -647,6 +647,18 @@ fn grab(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn daemon(lazy: bool) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
+
+    // One daemon per user. Checked before the portal so a second one never shows a dialog; a
+    // second daemon used to delete the first one's socket and take over (or, when killed, leave
+    // the first one running but unreachable). The kernel drops the lock if we crash.
+    let lock_path = get_socket_path().with_extension("lock");
+    let lock = fs::File::create(&lock_path)?;
+    if lock.try_lock().is_err() {
+        // Exit 2 is RestartPreventExitStatus in the unit: retrying cannot help.
+        eprintln!("portalgrab: a daemon is already running (lock held on {})", lock_path.display());
+        std::process::exit(2);
+    }
+
     println!("Initializing portalgrab daemon...");
 
     let portal_client = PortalClient::new()?;
