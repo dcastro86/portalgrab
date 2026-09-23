@@ -694,17 +694,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("UNIX socket listening at: {}", socket_path.display());
 
-    let ctrl_tx = control_tx.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        println!("Shutting down capture daemon...");
-        let _ = ctrl_tx.send(ControlMessage::Terminate);
-    });
+    // systemd stops services with SIGTERM, a terminal with SIGINT.
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     loop {
-        let (socket, _) = match listener.accept().await {
-            Ok(val) => val,
-            Err(_) => break,
+        let (socket, _) = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok(val) => val,
+                Err(_) => break,
+            },
+            _ = tokio::signal::ctrl_c() => break,
+            _ = sigterm.recv() => break,
         };
 
         // Peer UID validation to prevent local privilege escalation / cross-user spoofing
@@ -798,6 +798,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    println!("Shutting down capture daemon...");
+    let _ = std::fs::remove_file(&socket_path);
+    let _ = control_tx.send(ControlMessage::Terminate);
     let _ = worker_handle.join();
     Ok(())
 }
