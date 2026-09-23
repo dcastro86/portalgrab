@@ -129,7 +129,7 @@ This protocol is stable. Any change to it gets a new major version.
 
 | Status | Setup |
 | --- | --- |
-| Tested | KDE Plasma 6.7 (xdg-desktop-portal-kde), AMD GPU (DMA-BUF), PipeWire 1.6 |
+| Tested | KDE Plasma 6.7 (xdg-desktop-portal-kde), AMD GPU, PipeWire 1.6 |
 | Untested | GNOME, wlroots compositors (xdg-desktop-portal-wlr), NVIDIA |
 
 The untested setups use the same portal API and should work. If one doesn't, please open an issue

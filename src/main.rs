@@ -237,69 +237,10 @@ fn build_stream_params(
     width: u32,
     height: u32,
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
-    // 1. DMA-BUF format with linear modifier
-    let choice = spa::utils::Choice(
-        spa::utils::ChoiceFlags::empty(),
-        spa::utils::ChoiceEnum::Enum {
-            default: 0_i64,
-            alternatives: vec![0_i64],
-        },
-    );
-    let mut modifier_prop = Property::new(
-        FormatProperties::VideoModifier.as_raw(),
-        spa::pod::Value::Choice(spa::pod::ChoiceValue::Long(choice)),
-    );
-    modifier_prop.flags = spa::pod::PropertyFlags::from_bits_retain(
-        spa::pod::PropertyFlags::MANDATORY.bits() | (1 << 4) // (1 << 4) is DONT_FIXATE
-    );
-
-    let format_dmabuf = spa::pod::Object {
-        type_: SpaTypes::ObjectParamFormat.as_raw(),
-        id: ParamType::EnumFormat.as_raw(),
-        properties: vec![
-            spa::pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
-            spa::pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
-            spa::pod::property!(
-                FormatProperties::VideoFormat,
-                Choice,
-                Enum,
-                Id,
-                VideoFormat::BGRA,
-                VideoFormat::BGRx,
-                VideoFormat::RGBA,
-                VideoFormat::RGBx,
-            ),
-            modifier_prop,
-            spa::pod::property!(
-                FormatProperties::VideoSize,
-                Choice,
-                Range,
-                Rectangle,
-                spa::utils::Rectangle { width, height },
-                spa::utils::Rectangle { width: 1, height: 1 },
-                spa::utils::Rectangle { width: 7680, height: 4320 }
-            ),
-            spa::pod::property!(
-                FormatProperties::VideoFramerate,
-                Choice,
-                Range,
-                Fraction,
-                spa::utils::Fraction { num: frame_rate, denom: 1 },
-                spa::utils::Fraction { num: 0, denom: 1 },
-                spa::utils::Fraction { num: frame_rate, denom: 1 }
-            ),
-        ],
-    };
-
-    let dmabuf_bytes = spa::pod::serialize::PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(format_dmabuf),
-    )?
-    .0
-    .into_inner();
-
-    // 2. Fallback format (without modifiers)
-    let format_fallback = spa::pod::object!(
+    // Offer only formats without a DRM modifier, so the compositor sends shared-memory buffers.
+    // Mapping a DMA-BUF and reading it with the CPU hits uncached VRAM: measured 450-670 ms per
+    // 1080p frame (about 2 fps and a pinned core) against about 1.5 ms from shared memory.
+    let format = spa::pod::object!(
         SpaTypes::ObjectParamFormat,
         ParamType::EnumFormat,
         spa::pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
@@ -334,14 +275,14 @@ fn build_stream_params(
         ),
     );
 
-    let fallback_bytes = spa::pod::serialize::PodSerializer::serialize(
+    let format_bytes = spa::pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(format_fallback),
+        &spa::pod::Value::Object(format),
     )?
     .0
     .into_inner();
 
-    Ok(vec![dmabuf_bytes, fallback_bytes])
+    Ok(vec![format_bytes])
 }
 
 fn run_video_loop(
@@ -432,8 +373,8 @@ fn run_video_loop(
                 }
 
                 // ponytail: every frame is copied even with no client connected, so a grab is never
-                // stale. A `--lazy` flag that skips frames while idle is the upgrade if this shows up
-                // as real CPU cost.
+                // stale. Measured 2026-09-23 on 1080p with a video playing: ~25% of a core here and
+                // ~20% more in KWin. A `--lazy` flag that skips frames while idle is the upgrade.
                 let Some(mut buffer) = stream.dequeue_buffer() else {
                     return;
                 };
@@ -695,7 +636,7 @@ fn grab(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    println!("Initializing portalgrab daemon (PipeWire & DMA-BUF)...");
+    println!("Initializing portalgrab daemon...");
 
     let portal_client = PortalClient::new()?;
 
