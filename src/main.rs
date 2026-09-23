@@ -611,8 +611,69 @@ fn get_restore_token_path() -> std::path::PathBuf {
     state_dir.join("portalgrab").join("restore_token")
 }
 
+const USAGE: &str = "usage: portalgrab daemon | portalgrab grab [x y w h]";
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("daemon") if args.len() == 1 => daemon().await,
+        Some("grab") => grab(&args[1..]),
+        _ => Err(USAGE.into()),
+    };
+    if let Err(e) = result {
+        eprintln!("portalgrab: {e}");
+        std::process::exit(1);
+    }
+}
+
+/// One request to the daemon, written to stdout as a binary PPM (P6).
+fn grab(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{BufRead, Read, Write};
+
+    let request = match args {
+        [] => "\n".to_string(),
+        [x, y, w, h] => {
+            for n in [x, y, w, h] {
+                n.parse::<usize>().map_err(|_| format!("not a pixel coordinate: {n}\n{USAGE}"))?;
+            }
+            format!("{x} {y} {w} {h}\n")
+        }
+        _ => return Err(USAGE.into()),
+    };
+
+    let socket_path = get_socket_path();
+    let mut socket = std::os::unix::net::UnixStream::connect(&socket_path).map_err(|e| {
+        format!(
+            "daemon not reachable at {} ({e}); start it with: systemctl --user start portalgrab",
+            socket_path.display()
+        )
+    })?;
+    socket.write_all(request.as_bytes())?;
+
+    let mut reader = std::io::BufReader::new(socket);
+    let mut header = String::new();
+    reader.read_line(&mut header)?;
+    let header = header.trim_end();
+    let Some(("OK", size)) = header.split_once(' ') else {
+        return Err(if header.is_empty() { "daemon closed the connection" } else { header }.into());
+    };
+    let (w, h) = size
+        .split_once(' ')
+        .and_then(|(w, h)| Some((w.parse::<usize>().ok()?, h.parse::<usize>().ok()?)))
+        .ok_or_else(|| format!("bad header from daemon: {header}"))?;
+
+    let mut pixels = vec![0u8; w * h * 3];
+    reader.read_exact(&mut pixels)?;
+
+    let mut out = std::io::stdout().lock();
+    write!(out, "P6\n{w} {h}\n255\n")?;
+    out.write_all(&pixels)?;
+    out.flush()?;
+    Ok(())
+}
+
+async fn daemon() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     println!("Initializing portalgrab daemon (PipeWire & DMA-BUF)...");
 
@@ -730,17 +791,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match reader.read_line(&mut line).await {
                     Ok(0) => break, // EOF
                     Ok(_) => {
-                        let parts: Vec<&str> = line.trim().split_whitespace().collect();
-                        if parts.len() != 4 {
-                            let socket_ref = reader.get_mut();
-                            let _ = socket_ref.write_all(b"ERROR: Invalid request format. Use 'x y w h'\n").await;
-                            continue;
-                        }
-
-                        let crop_x: usize = parts[0].parse().unwrap_or(0);
-                        let crop_y: usize = parts[1].parse().unwrap_or(0);
-                        let crop_w: usize = parts[2].parse().unwrap_or(10);
-                        let crop_h: usize = parts[3].parse().unwrap_or(10);
+                        // "x y w h" is a region; an empty line is the full frame.
+                        let parsed: Result<Vec<usize>, _> = line.split_whitespace().map(str::parse).collect();
+                        let region = match parsed.as_deref() {
+                            Ok([]) => None,
+                            Ok(&[x, y, w, h]) => Some((x, y, w, h)),
+                            _ => {
+                                let socket_ref = reader.get_mut();
+                                let _ = socket_ref.write_all(b"ERROR: Invalid request format. Use 'x y w h' or an empty line\n").await;
+                                continue;
+                            }
+                        };
 
                         let opt_frame = match frame_ref.lock() {
                             Ok(lock) => lock.clone(),
@@ -750,8 +811,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(frame) = opt_frame {
                             let frame_w = frame.width as usize;
                             let frame_h = frame.height as usize;
+                            let (crop_x, crop_y, crop_w, crop_h) = region.unwrap_or((0, 0, frame_w, frame_h));
 
-                            let fits = crop_x
+                            let fits = crop_w > 0 && crop_h > 0 && crop_x
                                 .checked_add(crop_w)
                                 .map(|sum| sum <= frame_w)
                                 .unwrap_or(false)
