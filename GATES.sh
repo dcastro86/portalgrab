@@ -65,6 +65,15 @@ gate "--lazy pauses the stream while idle (needs a changing screen, e.g. a video
 gate "--lazy wakes on a grab and answers within 500 ms" \
   "bash tests/lazy_check.sh | grep -q '^LAZY-WAKE-OK$'"
 
+gate "the shipped unit runs --lazy" \
+  "grep -qx 'ExecStart=%h/.local/bin/portalgrab daemon --lazy' portalgrab.service"
+
+gate "the installed unit matches the shipped one" \
+  "cmp -s portalgrab.service \$HOME/.config/systemd/user/portalgrab.service"
+
+gate "portalgrab is not started at login on this machine (sanguine starts it)" \
+  "[ \"\$(systemctl --user is-enabled portalgrab 2>&1)\" = disabled ]"
+
 gate "release workflow builds portalgrab" \
   "grep -q 'portalgrab' .github/workflows/release.yml && ! grep -qi sanguine .github/workflows/release.yml"
 
@@ -73,8 +82,8 @@ gate "README is written for strangers (install, protocol, coordinates, tested-on
 
 # --- release ---------------------------------------------------------------
 
-gate "v0.1.0 is released with a binary" \
-  "gh release view v0.1.0 -R dcastro86/portalgrab --json assets -q '.assets | length' | grep -qE '^[1-9]'"
+gate "v0.2.0 (--lazy) is the latest release and has a binary" \
+  "gh release view -R dcastro86/portalgrab --json tagName,assets -q '\"\\(.tagName) \\(.assets | length)\"' | grep -qE '^v0\\.2\\.0 [1-9]'"
 
 gate "GitHub repo is public" \
   "gh repo view dcastro86/portalgrab --json visibility -q .visibility | grep -qx PUBLIC"
@@ -92,3 +101,9 @@ gate "sanguine README points at portalgrab, not the old crate" \
 
 gate "Status says released" \
   "grep -q '^\*\*Status:\*\* released' CLAUDE.md"
+
+gate "sanguine starts portalgrab on launch and stops only what it started" \
+  "bash tests/sanguine_lifecycle.sh | grep -q '^SANGUINE-LIFECYCLE-OK$'"
+
+gate "sanguine's tests pass" \
+  "(cd $S && venv/bin/python -m pytest -q 2>&1) | tail -1 | grep -qE '^[0-9]+ passed'"

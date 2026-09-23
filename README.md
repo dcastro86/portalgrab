@@ -86,8 +86,9 @@ playing: about 25% of a core in portalgrab and about 20% more in the compositor.
 
 `portalgrab daemon --lazy` pauses the stream after 2 s without a request, so both costs drop to
 zero while idle. The next grab wakes the stream and waits for a fresh frame, which took about
-15 ms in testing. Grabs that arrive while the stream is awake answer at once. To use it, change
-`ExecStart` in the unit to `%h/.local/bin/portalgrab daemon --lazy`.
+15 ms in testing. Grabs that arrive while the stream is awake answer at once. The shipped unit
+runs `--lazy`, which is why enabling it at login costs almost nothing. For always-on capture,
+remove the flag from `ExecStart`.
 
 KWin sends a frame as soon as a paused stream resumes, so a lazy grab is always current there. A
 compositor that only sends frames when something changes might send nothing on a static screen.

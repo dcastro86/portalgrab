@@ -25,4 +25,4 @@ second user needs something from **Not doing**.
 **Not doing (yet):** streaming frames to clients, source selection flags, AUR/crates.io packaging,
 X11/Windows backends (use `mss` there).
 
-**Status:** released 2026-09-23 (v0.1.1, public). sanguine-sentry uses it; its crate is gone. Open for bugs, or when a second user needs something from **Not doing**.
+**Status:** released 2026-09-23 (v0.2.0, public; `--lazy` is the unit default). sanguine-sentry uses it and starts the service itself; its crate is gone. Open for bugs, or when a second user needs something from **Not doing**.
