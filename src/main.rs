@@ -600,17 +600,17 @@ fn get_socket_path() -> std::path::PathBuf {
     panic!("Neither XDG_RUNTIME_DIR nor HOME is set. Cannot safely create socket.");
 }
 
+// State dir, not the runtime dir: XDG_RUNTIME_DIR is wiped at logout, and losing the token
+// brings the permission dialog back.
 fn get_restore_token_path() -> std::path::PathBuf {
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        let path = std::path::Path::new(&runtime_dir);
-        if path.is_dir() {
-            return path.join("portalgrab_restore_token.txt");
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return std::path::Path::new(&home).join(".portalgrab_restore_token.txt");
-    }
-    panic!("Neither XDG_RUNTIME_DIR nor HOME is set. Cannot safely create restore token.");
+    let state_dir = match std::env::var("XDG_STATE_HOME") {
+        Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
+        _ => match std::env::var("HOME") {
+            Ok(home) => std::path::Path::new(&home).join(".local/state"),
+            Err(_) => panic!("Neither XDG_STATE_HOME nor HOME is set. Cannot safely store restore token."),
+        },
+    };
+    state_dir.join("portalgrab").join("restore_token")
 }
 
 #[tokio::main]
@@ -635,16 +635,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Some(ref token) = cast.restore_token {
-        println!("Saving restore token to bypass future dialogs: {}", token);
-        let token_path = get_restore_token_path();
-        
-        use std::os::unix::fs::OpenOptionsExt;
+        println!("Saving restore token to {}", token_path.display());
+
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        if let Some(dir) = token_path.parent() {
+            let _ = fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+        }
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true).mode(0o600);
-        
-        if let Ok(mut file) = options.open(&token_path) {
-            use std::io::Write;
-            let _ = file.write_all(token.as_bytes());
+
+        match options.open(&token_path) {
+            Err(e) => eprintln!("Could not save restore token ({e}); the dialog will return next start"),
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = file.write_all(token.as_bytes());
+            }
         }
     }
 

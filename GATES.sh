@@ -24,7 +24,7 @@ gate "restore token lives in XDG_STATE_HOME (runtime dir is wiped every boot)" \
   "grep -q XDG_STATE_HOME src/main.rs && ! grep -q 'restore_token.txt' src/main.rs"
 
 gate "restore token is never printed (it would land in the journal)" \
-  "test -f src/main.rs && ! grep -nE '(println|eprintln|info|debug)!\(.*\btoken\b' src/main.rs"
+  "test -f src/main.rs && ! grep -nE '(println|eprintln|info|debug|warn|error)!\(.*(\{token\}|, *&?token\b)' src/main.rs"
 
 gate "cursor is hidden and the source is monitor-only" \
   "grep -qE '\"cursor_mode\", ZValue::from\(1_u32\)' src/main.rs && grep -qE '\"types\", ZValue::from\(1_u32\)' src/main.rs"
