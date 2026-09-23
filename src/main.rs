@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::os::fd::OwnedFd;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -35,7 +35,6 @@ struct UserData {
     video_format: VideoInfoRaw,
     buffer_params_sent: bool,
     frame_bytes: Vec<u8>,
-    active_clients: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
@@ -353,7 +352,6 @@ fn run_video_loop(
     runtime_active: Arc<AtomicBool>,
     latest_frame: Arc<Mutex<Option<SimpleFrame>>>,
     control_rx: std::sync::mpsc::Receiver<ControlMessage>,
-    active_clients: Arc<AtomicUsize>,
     target_w: u32,
     target_h: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -387,7 +385,6 @@ fn run_video_loop(
             video_format: VideoInfoRaw::default(),
             buffer_params_sent: false,
             frame_bytes: Vec::new(),
-            active_clients,
         })
         .state_changed(|_, _, _, new| match new {
             StreamState::Error(msg) => {
@@ -418,10 +415,9 @@ fn run_video_loop(
                     return;
                 }
 
-                if user_data.active_clients.load(Ordering::Relaxed) == 0 {
-                    return;
-                }
-
+                // ponytail: every frame is copied even with no client connected, so a grab is never
+                // stale. A `--lazy` flag that skips frames while idle is the upgrade if this shows up
+                // as real CPU cost.
                 let Some(mut buffer) = stream.dequeue_buffer() else {
                     return;
                 };
@@ -659,11 +655,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let latest_frame = Arc::new(Mutex::new(None::<SimpleFrame>));
     let (control_tx, control_rx) = std::sync::mpsc::channel();
     let runtime_active = Arc::new(AtomicBool::new(true));
-    let active_clients = Arc::new(AtomicUsize::new(0));
 
     let pw_latest_frame = latest_frame.clone();
     let pw_runtime_active = runtime_active.clone();
-    let pw_active_clients = active_clients.clone();
     
     let target_w = stream.width.unwrap_or(1920);
     let target_h = stream.height.unwrap_or(1080);
@@ -677,7 +671,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pw_runtime_active,
             pw_latest_frame,
             control_rx,
-            pw_active_clients,
             target_w,
             target_h,
         ) {
@@ -724,18 +717,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let frame_ref = latest_frame.clone();
-        let client_count_clone = active_clients.clone();
 
         tokio::spawn(async move {
-            struct ClientGuard(Arc<AtomicUsize>);
-            impl Drop for ClientGuard {
-                fn drop(&mut self) {
-                    self.0.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            client_count_clone.fetch_add(1, Ordering::SeqCst);
-            let _guard = ClientGuard(client_count_clone);
-
             use tokio::io::AsyncBufReadExt;
             let mut reader = tokio::io::BufReader::new(socket);
             let mut line = String::new();
