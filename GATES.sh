@@ -94,3 +94,12 @@ gate "GitHub repo is public" \
 
 gate "Status says released" \
   "grep -q '^\*\*Status:\*\* released' CLAUDE.md"
+gate "CLAUDE.md paths and npm scripts exist"   'doc-claims'
+gate "CLAUDE.md within budget"     '[ $(wc -l < CLAUDE.md) -le 200 ] && [ $(wc -c < CLAUDE.md) -le 12000 ]'
+gate "no closed lifecycle inline"  '! grep -qiE "^###.*Status: *(done|closed|dropped|retired)" CLAUDE.md'
+gate "Status stays short"          "python3 -c 'import re,sys;t=open(\"CLAUDE.md\").read();sys.exit(any(len(p)>400 for p in re.findall(r\"\\*\\*Status[^\\n]*(?:\\n(?!\\s*\\n)[^\\n]*)*\",t)))'"
+gate "doc links resolve"           'for l in $(grep -ohE "\]\((docs/[^)#]+)" CLAUDE.md README.md 2>/dev/null | cut -c3-); do [ -e "$l" ] || { echo "dead: $l"; exit 1; }; done'
+gate "goal history exists"         'test -s docs/goal-history.md'
+gate "ADRs exist"                  'ls docs/adr/[0-9][0-9][0-9][0-9]-*.md >/dev/null 2>&1'
+gate "ADRs carry date + status"    'for f in docs/adr/[0-9]*.md; do head -4 "$f" | grep -qE "^Date: 20[0-9]{2}-[0-9]{2}-[0-9]{2} · Status: (proposed|accepted|superseded by [0-9]{4})" || { echo "$f"; exit 1; }; done'
+gate "ADR links resolve"           'for n in $(grep -ohE "ADR [0-9]{4}" CLAUDE.md | cut -c5-); do ls docs/adr/$n-*.md >/dev/null 2>&1 || { echo "missing ADR $n"; exit 1; }; done'
